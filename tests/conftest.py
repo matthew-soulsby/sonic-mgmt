@@ -18,6 +18,8 @@ from datetime import datetime
 from ipaddress import ip_interface, IPv4Interface
 from tests.common.multi_servers_utils import MultiServersUtils
 from tests.common.fixtures.conn_graph_facts import conn_graph_facts     # noqa: F401
+from tests.common.errors import RunAnsibleModuleFail
+
 from tests.common.devices.local import Localhost
 from tests.common.devices.ptf import PTFHost
 from tests.common.devices.eos import EosHost
@@ -61,6 +63,7 @@ from tests.common.helpers.inventory_utils import trim_inventory
 from tests.common.utilities import InterruptableThread
 from tests.common.plugins.ptfadapter.dummy_testutils import DummyTestUtils
 from tests.common.helpers.multi_thread_utils import SafeThreadPoolExecutor
+from tests.common.helpers.report_utils import analyze_ptf_failure
 
 try:
     from tests.common.macsec import MacsecPluginT2, MacsecPluginT0
@@ -1060,12 +1063,21 @@ def pytest_runtest_makereport(item, call):
 
     # execute all other hooks to obtain the report object
     outcome = yield
-    rep = outcome.get_result()
+    rep: pytest.TestReport = outcome.get_result()
 
     # set a report attribute for each phase of a call, which can
     # be "setup", "call", "teardown"
 
-    setattr(item, "rep_" + rep.when, rep)
+    setattr(item, "rep_" + str(rep.when), rep)
+
+    # Custom report sections
+    if rep.when == "call" and call.excinfo:
+        exc_type = call.excinfo.type
+
+        # If there is a PTF failure, analyze and make a recommendation
+        if exc_type == RunAnsibleModuleFail:
+            ptf_failure_recommendation = analyze_ptf_failure(rep)
+            rep.sections.append(("PTF Failure Recommendation", ptf_failure_recommendation))
 
 
 # This function is a pytest hook implementation that is called in runtest call stage.
