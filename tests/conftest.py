@@ -63,7 +63,7 @@ from tests.common.helpers.inventory_utils import trim_inventory
 from tests.common.utilities import InterruptableThread
 from tests.common.plugins.ptfadapter.dummy_testutils import DummyTestUtils
 from tests.common.helpers.multi_thread_utils import SafeThreadPoolExecutor
-from tests.common.helpers.report_utils import analyze_ptf_failure
+from tests.common.helpers.report_utils import analyze_failure
 
 try:
     from tests.common.macsec import MacsecPluginT2, MacsecPluginT0
@@ -1076,8 +1076,10 @@ def pytest_runtest_makereport(item, call):
 
         # If there is a PTF failure, analyze and make a recommendation
         if exc_type == RunAnsibleModuleFail:
-            ptf_failure_recommendation = analyze_ptf_failure(rep)
-            rep.sections.append(("PTF Failure Recommendation", ptf_failure_recommendation))
+            failure_recommendation = analyze_failure(rep, call.excinfo)
+
+            if len(failure_recommendation) > 0:
+                rep.sections.append(("Ansible Module Failure Recommendation", failure_recommendation.strip()))
 
 
 # This function is a pytest hook implementation that is called in runtest call stage.
