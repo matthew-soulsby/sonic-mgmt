@@ -1071,7 +1071,7 @@ def pytest_runtest_makereport(item, call):
     setattr(item, "rep_" + str(rep.when), rep)
 
     # Custom report sections
-    if rep.when == "call" and call.excinfo:
+    if call.excinfo:
         exc_type = call.excinfo.type
 
         # If there is a PTF failure, analyze and make a recommendation
@@ -1079,7 +1079,34 @@ def pytest_runtest_makereport(item, call):
             failure_recommendation = analyze_failure(rep, call.excinfo)
 
             if len(failure_recommendation) > 0:
-                rep.sections.append(("Ansible Module Failure Recommendation", failure_recommendation.strip()))
+                add_custom_report_section(
+                    item=item,
+                    title="Ansible Module Failure Recommendation",
+                    content="\n".join(line.strip() for line in failure_recommendation.splitlines())
+                )
+
+
+def add_custom_report_section(item, title, content):
+    item._report_sections.append(("custom_section", title, content))
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    reports = terminalreporter.getreports("")
+
+    for report in reports:
+        for section in report.sections:
+            first_space = section[0].find(" ")
+            last_space = section[0].rfind(" ")
+
+            section_title = section[0][first_space + 1:last_space]
+            section_type = section[0][last_space + 1:]
+
+            if section_type != "custom_section":
+                continue
+
+            terminalreporter.ensure_newline()
+            terminalreporter.section(section_title, sep="=")
+            terminalreporter.write_line(section[1])
 
 
 # This function is a pytest hook implementation that is called in runtest call stage.

@@ -1,15 +1,20 @@
 import re
 
-from typing import Optional, cast
+from typing import cast, Optional, Dict
 
 from pytest import ExceptionInfo, TestReport
 
 from tests.common.devices.eos import EosHost
 from tests.common.devices.ptf import PTFHost
-from tests.common.devices.sonic import SonicHost
+from tests.common.devices.multi_asic import MultiAsicSonicHost
 
 
-def extract_info_from_traceback(req: dict[str, type], exception_info: ExceptionInfo):
+def extract_info_from_traceback(req: Dict[str, tuple[str, type]], exception_info: ExceptionInfo):
+    '''
+    Searches each level of the provided exception's traceback for the value matching the name and type,
+    as provided in the tuple.
+    If located, the value is stored at the key associated with the tuple.
+    '''
     res = {}
 
     # Check at each level of traceback
@@ -18,15 +23,17 @@ def extract_info_from_traceback(req: dict[str, type], exception_info: ExceptionI
         locals_at_frame = raw_frame.f_locals
 
         # Check each remaining requested value
-        for name, val_type in req.items():
-            if name in locals_at_frame:
-                val = locals_at_frame[name]
+        for name, value in req.items():
+            # Don't override already found values
+            if name in res:
+                continue
+
+            val_name, val_type = value
+            if val_name in locals_at_frame:
+                val = locals_at_frame[val_name]
                 if isinstance(val, val_type):
                     # Store this value
                     res[name] = val
-
-                    # Stop searching for it
-                    req.pop(name)
 
     return res
 
@@ -34,14 +41,14 @@ def extract_info_from_traceback(req: dict[str, type], exception_info: ExceptionI
 def analyze_failure(report: TestReport, exception_info: ExceptionInfo):
     err_msg = str(exception_info.value)
     info = extract_info_from_traceback({
-        'self': EosHost,
-        'ptfhost': PTFHost,
-        'duthost': SonicHost,
+        'eoshost': ('self', EosHost),
+        'ptfhost': ('ptfhost', PTFHost),
+        'duthost': ('duthost', MultiAsicSonicHost),
     }, exception_info)
 
-    eos_host = cast(Optional[EosHost], info.get('self'))
+    eos_host = cast(Optional[EosHost], info.get('eoshost'))
     ptf_host = cast(Optional[PTFHost], info.get('ptfhost'))
-    dut_host = cast(Optional[SonicHost], info.get('duthost'))
+    dut_host = cast(Optional[MultiAsicSonicHost], info.get('duthost'))
 
     # SSH unavailable - EoS host
     if "Unable to connect to port 22" in err_msg:
@@ -169,6 +176,28 @@ def analyze_failure(report: TestReport, exception_info: ExceptionInfo):
         ptf_ip = ptf_host.mgmt_ip
         return f"""
             gNMI heartbeat deadline exceeded.
+
+            Check the reachability between the DUT (IP: {dut_ip}) and the
+            PTF container (IP: {ptf_ip}).
+
+            Additionally, check that the gNMI container is running as expected
+            on the DUT (port 50051).
+        """
+
+    if "[Errno 110] Connection timed out" in err_msg:
+        if not dut_host or not ptf_host:
+            # Default message for cases where we could not get dut/ptf info
+            return """
+                Connection to the gNMI container timed out from the PTF container.
+
+                The DUT may be unreachable from the PTF container.
+                Additionally, the gNMI container may be unhealthy.
+            """
+
+        dut_ip = dut_host.mgmt_ip
+        ptf_ip = ptf_host.mgmt_ip
+        return f"""
+            Connection to the gNMI container timed out from the PTF container.
 
             Check the reachability between the DUT (IP: {dut_ip}) and the
             PTF container (IP: {ptf_ip}).
